@@ -6,7 +6,7 @@
 #define THREAD_BLOCK_Y		8
 #define THREAD_BLOCK_Z		8
 
-#define REST_DENS			0.56
+#define REST_DENS			0.75
 
 template<typename T>
 inline AmpPoisson3D<T>::AmpPoisson3D()
@@ -14,13 +14,34 @@ inline AmpPoisson3D<T>::AmpPoisson3D()
 }
 
 template<typename T>
-inline void AmpPoisson3D<T>::Init(const DirectX::XMUINT3 &vSimSize, AmpAcclView &acclView)
+inline void AmpPoisson3D<T>::Init(cuint3 &vSimSize, const uint8_t bitWidth, AmpAcclView &acclView)
 {
-	Init(vSimSize.x, vSimSize.y, vSimSize.z, acclView);
+	Init(vSimSize.x, vSimSize.y, vSimSize.z, bitWidth, acclView);
+}
+
+template<>
+inline void AmpPoisson3D<float>::Init(const int32_t iWidth, const int32_t iHeight, const int32_t iDepth,
+	const uint8_t bitWidth, AmpAcclView &acclView)
+{
+	const auto fWidth = static_cast<float>(iWidth);
+	const auto fHeight = static_cast<float>(iHeight);
+	const auto fDepth = static_cast<float>(iDepth);
+	m_vSimSize = float3(fWidth, fHeight, fDepth);
+
+	// Initialize data
+	const auto uByteWidth = (bitWidth / 8u) * iWidth * iHeight * iDepth;
+	auto vData = std::vector<byte>(uByteWidth);
+	ZeroMemory(vData.data(), uByteWidth);
+
+	// Create 3D textures
+	m_pSrcKnown = std::make_shared<AmpTexture<float>>(iDepth, iHeight, iWidth, vData.data(), uByteWidth, bitWidth, acclView);
+	m_pDstUnknown = std::make_shared<AmpTexture<float>>(iDepth, iHeight, iWidth, bitWidth, acclView);
+	m_pSrcUnknown = nullptr;
 }
 
 template<typename T>
-inline void AmpPoisson3D<T>::Init(const int32_t iWidth, const int32_t iHeight, const int32_t iDepth, AmpAcclView &acclView)
+inline void AmpPoisson3D<T>::Init(const int32_t iWidth, const int32_t iHeight, const int32_t iDepth,
+	const uint8_t bitWidth, AmpAcclView &acclView)
 {
 	const auto fWidth = static_cast<float>(iWidth);
 	const auto fHeight = static_cast<float>(iHeight);
@@ -28,38 +49,42 @@ inline void AmpPoisson3D<T>::Init(const int32_t iWidth, const int32_t iHeight, c
 	m_vSimSize = float3(fWidth, fHeight, fDepth);
 	
 	// Initialize data
-	//const auto uByteWidth = sizeof(T) * uWidth * uHeight * uDepth;
-	//auto vData = vbyte(uByteWidth);
-	//ZeroMemory(vData.data(), uByteWidth);
+	const auto uNumElement = sizeof(T) / sizeof(float);
+	const auto uByteWidth = (bitWidth / 8u) * uNumElement * iWidth * iHeight * iDepth;
+	auto vData = vbyte(uByteWidth);
+	ZeroMemory(vData.data(), uByteWidth);
 
 	// Create 3D textures
-	m_pTxKnown = make_shared<AmpTexture<T>>(iDepth, iHeight, iWidth, acclView);
-	m_pTxUnknown = make_shared<AmpTexture<T>>(iDepth, iHeight, iWidth, acclView);
-	m_pTxPingpong = make_shared<AmpTexture<T>>(iDepth, iHeight, iWidth, acclView);
+	m_pSrcKnown = make_shared<AmpTexture<T>>(iDepth, iHeight, iWidth, vData.data(), uByteWidth, bitWidth, acclView);
+	m_pDstUnknown = make_shared<AmpTexture<T>>(iDepth, iHeight, iWidth, bitWidth, acclView);
+	m_pSrcUnknown = make_shared<AmpTexture<T>>(iDepth, iHeight, iWidth, bitWidth, acclView);
 }
 
 template<typename T>
 template<typename U>
 inline void AmpPoisson3D<T>::ComputeDivergence(const AmpTextureView<U> &tvSource)
 {
-	const auto tvKnownRW = AmpRWTextureView<T>(dref(m_pTxKnown));
+	const auto tvDstRW = AmpRWTextureView<T>(dref(m_pDstUnknown));
 
 	parallel_for_each(
 		// Define the compute domain, which is the set of threads that are created.
-		tvKnownRW.extent,
+		tvDstRW.extent,
 		// Define the code to run on each thread on the accelerator.
 		[=](const AmpIndex idx) restrict(amp)
 	{
-		tvKnownRW.set(idx, Divergence3D(tvSource, idx));
+		tvDstRW.set(idx, Divergence3D(tvSource, idx));
 	}
 	);
+
+	// Swap buffers
+	SwapTextures();
 }
 
 template<>
 inline void AmpPoisson3D<float>::SolvePoisson(cfloat2 &vf, const uint8_t uIteration)
 {
-	const auto tvUnknownRW = AmpRWTextureView<float>(*m_pTxUnknown);
-	const auto tvKnownRO = AmpTextureView<float>(*m_pTxKnown);
+	const auto tvUnknownRW = AmpRWTextureView<float>(*m_pDstUnknown);
+	const auto tvKnownRO = AmpTextureView<float>(*m_pSrcKnown);
 
 	parallel_for_each(
 		// Define the compute domain, which is the set of threads that are created.
@@ -70,28 +95,34 @@ inline void AmpPoisson3D<float>::SolvePoisson(cfloat2 &vf, const uint8_t uIterat
 		// Unordered Gauss-Seidel iteration
 		for (concurrency::graphics::uint i = 0; i < 1024; ++i)
 		{
-			const auto fPressPRev = tvUnknownRW[idx];
+			const auto fPressPrev = tvUnknownRW[idx];
 			const auto fPress = gaussSeidel(tvUnknownRW, tvKnownRO, vf, idx);
 
-			if (concurrency::fast_math::fabsf(fPress - fPressPRev) < 0.0000001f) return;
+			if (concurrency::fast_math::fabsf(fPress - fPressPrev) < 0.0000001f) return;
 			tvUnknownRW.set(idx, fPress);
 		}
 	}
 	);
+
+	// Swap buffers
+	SwapTextures();
 }
 
 template<typename T>
 inline void AmpPoisson3D<T>::SolvePoisson(cfloat2 &vf, const uint8_t uIteration)
 {
 	for (auto i = 0ui8; i < uIteration; ++i) jacobi(vf);
+
+	// Swap buffers
+	SwapTextures();
 }
 
 template<typename T>
 template<typename U>
 inline void AmpPoisson3D<T>::Advect(cfloat fDeltaTime, const AmpTextureView<U>& tvSource)
 {
-	const auto tvUnknownRW = AmpRWTextureView<T>(dref(m_pTxPingpong));
-	const auto tvUnknownRO = AmpTextureView<T>(dref(m_pTxUnknown));
+	const auto tvUnknownRW = AmpRWTextureView<T>(dref(m_pDstUnknown));
+	const auto tvknownRO = AmpTextureView<T>(dref(m_pSrcKnown));
 
 	const auto vTexel = 1.0f / m_vSimSize;
 
@@ -108,18 +139,19 @@ inline void AmpPoisson3D<T>::Advect(cfloat fDeltaTime, const AmpTextureView<U>& 
 		const auto vTex = (vLoc + 0.5f) * vTexel - vU;
 
 		// Update
-		tvUnknownRW.set(idx, tvUnknownRO.sample<filter_linear, address_clamp>(vTex));
+		tvUnknownRW.set(idx, tvknownRO.sample<filter_linear, address_clamp>(vTex));
 	}
 	);
 
-	// Swap
-	m_pTxPingpong.swap(m_pTxUnknown);
+	// Swap buffers
+	SwapTextures();
 }
 
 template<typename T>
-inline void AmpPoisson3D<T>::SwapTextures()
+inline void AmpPoisson3D<T>::SwapTextures(const bool bUnknown = false)
 {
-	m_pTxKnown.swap(m_pTxUnknown);
+	if (bUnknown) m_pSrcUnknown.swap(m_pDstUnknown);
+	else m_pSrcKnown.swap(m_pDstUnknown);
 }
 
 template<typename T>
@@ -129,10 +161,10 @@ inline float AmpPoisson3D<T>::gaussSeidel(const AmpRWTextureView<float> &tvUnkno
 	auto fq = vf.x * tvKnownRO[idx];
 	fq += tvUnknownRW(idx[0], idx[1], idx[2] - 1);
 	fq += tvUnknownRW(idx[0], idx[1], idx[2] + 1);
-	fq += tvUnknownRW(idx[0] - 1, idx[1], idx[2]);
-	fq += tvUnknownRW(idx[0] + 1, idx[1], idx[2]);
 	fq += tvUnknownRW(idx[0], idx[1] - 1, idx[2]);
 	fq += tvUnknownRW(idx[0], idx[1] + 1, idx[2]);
+	fq += tvUnknownRW(idx[0] - 1, idx[1], idx[2]);
+	fq += tvUnknownRW(idx[0] + 1, idx[1], idx[2]);
 
 	return fq / vf.y;
 }
@@ -140,9 +172,9 @@ inline float AmpPoisson3D<T>::gaussSeidel(const AmpRWTextureView<float> &tvUnkno
 template<typename T>
 inline void AmpPoisson3D<T>::jacobi(cfloat2 & vf)
 {
-	const auto tvUnknownRW = AmpRWTextureView<T>(dref(m_pTxPingpong));
-	const auto tvUnknownRO = AmpTextureView<T>(dref(m_pTxUnknown));
-	const auto tvKnownRO = AmpTextureView<T>(dref(m_pTxKnown));
+	const auto tvUnknownRW = AmpRWTextureView<T>(dref(m_pDstUnknown));
+	const auto tvUnknownRO = AmpTextureView<T>(dref(m_pSrcUnknown));
+	const auto tvKnownRO = AmpTextureView<T>(dref(m_pSrcKnown));
 
 	parallel_for_each(
 		// Define the compute domain, which is the set of threads that are created.
@@ -162,6 +194,6 @@ inline void AmpPoisson3D<T>::jacobi(cfloat2 & vf)
 	}
 	);
 
-	// Swap
-	m_pTxPingpong.swap(m_pTxUnknown);
+	// Swap buffers
+	m_pSrcUnknown.swap(m_pDstUnknown);
 }

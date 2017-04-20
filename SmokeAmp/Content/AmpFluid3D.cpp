@@ -5,6 +5,8 @@
 #include "pch.h"
 #include "AmpFluid3D.h"
 
+#pragma optimize("Workaround a compiler bug temporarily", off)
+
 using namespace concurrency;
 using namespace concurrency::direct3d;
 using namespace concurrency::fast_math;
@@ -37,21 +39,24 @@ void AmpFluid3D::Init(const int32_t iWidth, const int32_t iHeight, const int32_t
 	m_vSimSize = float3(fWidth, fHeight, fDepth);
 
 	// Create 3D textures
-	m_pTxDensity = make_unique<AmpTexture<float>>(iDepth, iHeight, iWidth, m_acclView);
-	m_pTxAdvDensity = make_unique<AmpTexture<float>>(iDepth, iHeight, iWidth, m_acclView);
+	m_pSrcDensity = make_unique<AmpTexture<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
+	m_pDstDensity = make_unique<AmpTexture<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
+#ifdef _MACCORMACK_
+	m_pTmpDensity = make_unique<AmpTexture<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
+#endif
 
 	auto pTexture = CPDXTexture3D();
-	auto pUnknown = graphics::direct3d::get_texture(dref(m_pTxDensity));
+	auto pUnknown = graphics::direct3d::get_texture(dref(m_pSrcDensity));
 	pUnknown->QueryInterface<ID3D11Texture3D>(&pTexture);
 	pUnknown->Release();
 
-	const auto desc = CD3D11_SHADER_RESOURCE_VIEW_DESC(pTexture.Get(), DXGI_FORMAT_R32_FLOAT, 0u, 1u);
+	const auto desc = CD3D11_SHADER_RESOURCE_VIEW_DESC(pTexture.Get(), DXGI_FORMAT_R16_FLOAT, 0u, 1u);
 	ThrowIfFailed(m_pDXDevice->CreateShaderResourceView(pTexture.Get(), &desc, &m_pSRVDensity));
 
-	m_diffuse.Init(iWidth, iHeight, iDepth, m_acclView);
-	m_pressure.Init(iWidth, iHeight, iDepth, m_acclView);
-	m_pTxVelocity = m_diffuse.GetResult();
-	m_pTxAdvVelocity = m_diffuse.GetKnown();
+	m_diffuse.Init(iWidth, iHeight, iDepth, 16ui8, m_acclView);
+	m_pressure.Init(iWidth, iHeight, iDepth, 32ui8, m_acclView);
+	m_pSrcVelocity = m_diffuse.GetSrc();
+	m_pDstVelocity = m_diffuse.GetDst();
 }
 
 void AmpFluid3D::Simulate(cfloat fDeltaTime, cfloat4 vForceDens, cfloat3 vImLoc, const uint8_t uItVisc)
@@ -89,18 +94,38 @@ void AmpFluid3D::Render()
 
 void AmpFluid3D::advect(cfloat fDeltaTime)
 {
-	static const auto fDissipation = 0.996f;
+	auto tvVelocityRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
+	advect(fDeltaTime, tvVelocityRO);
 
-	const auto tvVelocityRW = AmpRWTextureView<float4>(dref(m_pTxAdvVelocity));
-	const auto tvDensityRW = AmpRWTextureView<float>(dref(m_pTxAdvDensity));
-	const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pTxVelocity));
-	const auto tvDensityRO = AmpTextureView<float>(dref(m_pTxDensity));
+#ifdef _MACCORMACK_
+	m_pDiffuse->SwapTextures(true);
+	m_pDstVelocity = m_pDiffuse->GetDst();
+	pSrcVelocity = m_pDiffuse->GetTmp()->GetSRV();
+	m_pTmpDensity.swap(m_pDstDensity);
+	advect(-fDeltaTime, pSrcVelocity);
+
+	macCormack(fDeltaTime, pSrcVelocity);
+#endif
+}
+
+void AmpFluid3D::advect(cfloat fDeltaTime, const AmpTextureView<float4> &tvVelocityRO)
+{
+#ifdef _MACCORMACK_
+	static const auto fDecay = 1.0f;
+#else
+	static const auto fDecay = 0.996f;
+#endif
+
+	const auto tvPhiVelRW = AmpRWTextureView<float4>(dref(m_pDstVelocity));
+	const auto tvPhiDenRW = AmpRWTextureView<float>(dref(m_pDstDensity));
+	const auto tvPhiVelRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
+	const auto tvPhiDenRO = AmpTextureView<float>(dref(m_pSrcDensity));
 
 	const auto vTexel = 1.0f / m_vSimSize;
 
 	parallel_for_each(
 		// Define the compute domain, which is the set of threads that are created.
-		tvVelocityRW.extent,
+		tvPhiVelRW.extent,
 		// Define the code to run on each thread on the accelerator.
 		[=](const AmpIndex idx) restrict(amp)
 	{
@@ -108,32 +133,37 @@ void AmpFluid3D::advect(cfloat fDeltaTime)
 		
 		// Velocity tracing
 		const auto vU = tvVelocityRO[idx].xyz;
-		const auto vTex = (vLoc + 0.5f) * vTexel - vU;
+		const auto vTex = (vLoc + 0.5f) * vTexel - vU * fDeltaTime;
 
 		// Update velocity and density
-		tvVelocityRW.set(idx, tvVelocityRO.sample<filter_linear, address_clamp>(vTex));
-		tvDensityRW.set(idx, tvDensityRO.sample<filter_linear, address_clamp>(vTex) * fDissipation);
+		tvPhiVelRW.set(idx, tvPhiVelRO.sample<filter_linear, address_wrap>(vTex));
+		tvPhiDenRW.set(idx, tvPhiDenRO.sample<filter_linear, address_wrap>(vTex) * fDecay);
 	}
 	);
+
+	// Swap buffers
+	m_diffuse.SwapTextures();
+	m_pSrcVelocity = m_diffuse.GetSrc();
+	m_pDstVelocity = m_diffuse.GetDst();
+	m_pSrcDensity.swap(m_pDstDensity);
 }
 
 void AmpFluid3D::diffuse(const uint8_t uIteration)
 {
-	if (uIteration > 0u) m_diffuse.SolvePoisson(uIteration);
-	else
+	if (uIteration > 0u)
 	{
-		m_diffuse.SwapTextures();
-		m_pTxAdvVelocity = m_diffuse.GetKnown();
+		m_diffuse.SolvePoisson(uIteration);
+		m_pSrcVelocity = m_diffuse.GetSrc();
+		m_pDstVelocity = m_diffuse.GetDst();
 	}
-	m_pTxVelocity = m_diffuse.GetResult();
 }
 
 void AmpFluid3D::impulse(cfloat fDeltaTime, cfloat4 &vForceDens, cfloat3 &vImLoc)
 {
-	const auto tvVelocityRW = AmpRWTextureView<float4>(dref(m_pTxAdvVelocity));
-	const auto tvDensityRW = AmpRWTextureView<float>(dref(m_pTxDensity));
-	const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pTxVelocity));
-	const auto tvDensityRO = AmpTextureView<float>(dref(m_pTxAdvDensity));
+	const auto tvVelocityRW = AmpRWTextureView<float4>(dref(m_pDstVelocity));
+	const auto tvDensityRW = AmpRWTextureView<float>(dref(m_pDstDensity));
+	const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
+	const auto tvDensityRO = AmpTextureView<float>(dref(m_pSrcDensity));
 
 	const auto vTexel = 1.0f / m_vSimSize;
 
@@ -156,12 +186,18 @@ void AmpFluid3D::impulse(cfloat fDeltaTime, cfloat4 &vForceDens, cfloat3 &vImLoc
 		tvDensityRW.set(idx, tvDensityRO[idx] + fDens * fBasis);
 	}
 	);
+
+	// Swap buffers
+	m_diffuse.SwapTextures();
+	m_pSrcVelocity = m_diffuse.GetSrc();
+	m_pDstVelocity = m_diffuse.GetDst();
+	m_pSrcDensity.swap(m_pDstDensity);
 }
 
 void AmpFluid3D::project(cfloat fDeltaTime)
 {
 	{
-		const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pTxAdvVelocity));
+		const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
 		m_pressure.ComputeDivergence(tvVelocityRO);
 		m_pressure.SolvePoisson(cfloat2(-1.0f, 6.0f));
 	}
@@ -170,9 +206,9 @@ void AmpFluid3D::project(cfloat fDeltaTime)
 
 	// Projection
 	{
-		auto txPressure = m_pressure.GetResult();
-		const auto tvVelocityRW = AmpRWTextureView<float4>(dref(m_pTxAdvVelocity));
-		const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pTxVelocity));
+		auto txPressure = m_pressure.GetSrc();
+		const auto tvVelocityRW = AmpRWTextureView<float4>(dref(m_pDstVelocity));
+		const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
 		const auto tvPressureRO = AmpTextureView<float>(dref(txPressure));
 
 		parallel_for_each(
@@ -186,6 +222,11 @@ void AmpFluid3D::project(cfloat fDeltaTime)
 			tvVelocityRW.set(idx, float4(vVelocity.x, vVelocity.y, vVelocity.z, 0.0f));
 		}
 		);
+
+		// Swap buffers
+		m_diffuse.SwapTextures();
+		m_pSrcVelocity = m_diffuse.GetSrc();
+		m_pDstVelocity = m_diffuse.GetDst();
 	}
 
 	bound();
@@ -201,8 +242,8 @@ void AmpFluid3D::project(cfloat fDeltaTime)
 
 void AmpFluid3D::bound()
 {
-	const auto tvVelocityRW = AmpRWTextureView<float4>(dref(m_pTxVelocity));
-	const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pTxAdvVelocity));
+	const auto tvVelocityRW = AmpRWTextureView<float4>(dref(m_pDstVelocity));
+	const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
 
 	parallel_for_each(
 		// Define the compute domain, which is the set of threads that are created.
@@ -214,7 +255,8 @@ void AmpFluid3D::bound()
 		const auto vMax = int3(tvVelocityRW.extent[2], tvVelocityRW.extent[1], tvVelocityRW.extent[0]) - 1;
 		auto vLoc = idx;
 
-		const int3 vOffset = {
+		const int3 vOffset =
+		{
 			vLoc[2] >= vMax.x ? -1 : (vLoc[2] <= 0 ? 1 : 0),
 			vLoc[1] >= vMax.y ? -1 : (vLoc[1] <= 0 ? 1 : 0),
 			vLoc[0] >= vMax.z ? -1 : (vLoc[0] <= 0 ? 1 : 0)
@@ -228,4 +270,9 @@ void AmpFluid3D::bound()
 		else tvVelocityRW.set(idx, tvVelocityRO[idx]);
 	}
 	);
+
+	// Swap buffers
+	m_diffuse.SwapTextures();
+	m_pSrcVelocity = m_diffuse.GetSrc();
+	m_pDstVelocity = m_diffuse.GetDst();
 }
