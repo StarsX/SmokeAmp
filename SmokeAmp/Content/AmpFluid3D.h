@@ -30,15 +30,17 @@ public:
 
 protected:
 	void advect(cfloat fDeltaTime);
+	void advect(cfloat fDeltaTime, const AmpTextureView<float4> &tvVelocityRO);
 	void diffuse(const uint8_t uIteration);
 	void impulse(cfloat fDeltaTime, cfloat4 &vForceDens, cfloat3 &vImLoc);
 	void project(cfloat fDeltaTime);
 	void bound();
 
-	spAmpTexture<float4>			m_pTxVelocity;
-	spAmpTexture<float4>			m_pTxAdvVelocity;
-	spAmpTexture<float>				m_pTxDensity;
-	spAmpTexture<float>				m_pTxAdvDensity;
+	spAmpTexture<float4>			m_pSrcVelocity;
+	spAmpTexture<float4>			m_pDstVelocity;
+	spAmpTexture<float>				m_pSrcDensity;
+	spAmpTexture<float>				m_pDstDensity;
+	spAmpTexture<float>				m_pTmpDensity;
 
 	XSDX::CPDXShaderResourceView	m_pSRVDensity;
 

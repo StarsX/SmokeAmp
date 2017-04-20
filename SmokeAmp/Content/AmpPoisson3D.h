@@ -20,26 +20,28 @@ class AmpPoisson3D
 public:
 	AmpPoisson3D();
 
-	void Init(const DirectX::XMUINT3 &vSimSize, AmpAcclView &acclView);
-	void Init(const int32_t iWidth, const int32_t iHeight, const int32_t iDepth, AmpAcclView &acclView);
+	void Init(cuint3 &vSimSize, const uint8_t bitWidth, AmpAcclView &acclView);
+	void Init(const int32_t iWidth, const int32_t iHeight, const int32_t iDepth,
+		const uint8_t bitWidth, AmpAcclView &acclView);
 	template<typename U>
 	void ComputeDivergence(const AmpTextureView<U> &tvSource);
 	void SolvePoisson(cfloat2 &vf, const uint8_t uIteration = 1ui8);
 	template<typename U>
 	void Advect(cfloat fDeltaTime, const AmpTextureView<U> &tvSource);
-	void SwapTextures();
+	void SwapTextures(const bool bUnknown = false);
 
-	const spAmpTexture<T>	&GetKnown()		const { return m_pTxKnown; }
-	const spAmpTexture<T>	&GetResult()	const { return m_pTxUnknown; }
+	const spAmpTexture<T>	&GetSrc() const { return m_pSrcKnown; }
+	const spAmpTexture<T>	&GetDst() const { return m_pDstUnknown; }
+	const spAmpTexture<T>	&GetTmp() const { return m_pSrcUnknown; }
 
 protected:
 	static float gaussSeidel(const AmpRWTextureView<float> &tvUnknownRW, const AmpTextureView<float> &tvKnownRO,
 		cfloat2 &vf, const AmpIndex &idx) restrict(amp);
 	void jacobi(cfloat2 &vf);
 
-	spAmpTexture<T>		m_pTxKnown;
-	spAmpTexture<T>		m_pTxUnknown;
-	spAmpTexture<T>		m_pTxPingpong;
+	spAmpTexture<T>		m_pSrcKnown;
+	spAmpTexture<T>		m_pSrcUnknown;
+	spAmpTexture<T>		m_pDstUnknown;
 
 	float3				m_vSimSize;
 };
