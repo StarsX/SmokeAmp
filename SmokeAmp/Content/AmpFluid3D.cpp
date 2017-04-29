@@ -7,28 +7,65 @@
 
 #pragma optimize("Workaround a compiler bug temporarily", off)
 
+#define NUM_SAMPLES			128
+#define NUM_LIGHT_SAMPLES	32
+#define ABSORPTION			1.0f
+#define ZERO_THRESHOLD		0.01f
+//#define ONE_THRESHOLD		0.999f
+
 using namespace concurrency;
 using namespace concurrency::direct3d;
 using namespace concurrency::fast_math;
 using namespace concurrency::graphics;
-using namespace DX;
 using namespace std;
-using namespace ShaderIDs;
 using namespace XSDX;
 
-const auto g_pNullSRV = static_cast<LPDXShaderResourceView>(nullptr);	// Helper to Clear SRVs
-const auto g_pNullUAV = static_cast<LPDXUnorderedAccessView>(nullptr);	// Helper to Clear UAVs
-const auto g_iNullUint = 0u;											// Helper to Clear Buffers
-
-AmpFluid3D::AmpFluid3D(const CPDXDevice &pDXDevice, const spShader &pShader, const spState &pState) :
-	m_pDXDevice(pDXDevice),
-	m_pShader(pShader),
-	m_pState(pState),
-	m_uSRField(0ui8),
-	m_uSmpLinearClamp(1ui8),
-	m_acclView(create_accelerator_view(pDXDevice.Get()))
+// Screen space to loacal space
+inline float3 ScreenToLocal(cfloat3 &vLoc, cfloat4x4 &mScreenToLocal) restrict(amp)
 {
-	m_pDXDevice->GetImmediateContext(&m_pDXContext);
+	float4 vPos = mul(mScreenToLocal, float4(vLoc.x, vLoc.y, vLoc.z, 1.0f));
+
+	return vPos.xyz / vPos.w;
+}
+
+// Compute start point of the ray
+inline bool ComputeStartPoint(float3 &vPos, cfloat3 vRayDir) restrict(amp)
+{
+	if (fabs(vPos.x) <= 1.0 && fabs(vPos.y) <= 1.0 && fabs(vPos.z) <= 1.0) return true;
+
+	cfloat aPos[3] = { vPos.x, vPos.y, vPos.z };
+	cfloat aRayDir[3] = { vRayDir.x, vRayDir.y, vRayDir.z };
+
+	//float U = asfloat(0x7f800000);	// INF
+	auto U = FLT_MAX;
+	auto bHit = false;
+
+	for (uint i = 0; i < 3; ++i)
+	{
+		const auto u = ((aRayDir[i] < 0.0f ? 1.0f : -1.0f) - aPos[i]) / aRayDir[i];
+		if (u < 0.0f) continue;
+
+		const auto j = (i + 1) % 3, k = (i + 2) % 3;
+		if (fabs(aRayDir[j] * u + aPos[j]) > 1.0f) continue;
+		if (fabs(aRayDir[k] * u + aPos[k]) > 1.0f) continue;
+		if (u < U)
+		{
+			U = u;
+			bHit = true;
+		}
+	}
+
+	vPos += vRayDir * U;
+	vPos.x = clamp(vPos.x, -1.0f, 1.0f);
+	vPos.y = clamp(vPos.y, -1.0f, 1.0f);
+	vPos.z = clamp(vPos.z, -1.0f, 1.0f);
+
+	return bHit;
+}
+
+AmpFluid3D::AmpFluid3D(const AmpAcclView &acclView) :
+	m_acclView(acclView)
+{
 }
 
 void AmpFluid3D::Init(const int32_t iWidth, const int32_t iHeight, const int32_t iDepth)
@@ -39,19 +76,11 @@ void AmpFluid3D::Init(const int32_t iWidth, const int32_t iHeight, const int32_t
 	m_vSimSize = float3(fWidth, fHeight, fDepth);
 
 	// Create 3D textures
-	m_pSrcDensity = make_unique<AmpTexture<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
-	m_pDstDensity = make_unique<AmpTexture<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
+	m_pSrcDensity = make_unique<AmpTexture3D<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
+	m_pDstDensity = make_unique<AmpTexture3D<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
 #ifdef _MACCORMACK_
 	m_pTmpDensity = make_unique<AmpTexture<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
 #endif
-
-	auto pTexture = CPDXTexture3D();
-	auto pUnknown = graphics::direct3d::get_texture(dref(m_pSrcDensity));
-	pUnknown->QueryInterface<ID3D11Texture3D>(&pTexture);
-	pUnknown->Release();
-
-	const auto desc = CD3D11_SHADER_RESOURCE_VIEW_DESC(pTexture.Get(), DXGI_FORMAT_R16_FLOAT, 0u, 1u);
-	ThrowIfFailed(m_pDXDevice->CreateShaderResourceView(pTexture.Get(), &desc, &m_pSRVDensity));
 
 	m_diffuse.Init(iWidth, iHeight, iDepth, 16ui8, m_acclView);
 	m_pressure.Init(iWidth, iHeight, iDepth, 32ui8, m_acclView);
@@ -67,34 +96,112 @@ void AmpFluid3D::Simulate(cfloat fDeltaTime, cfloat4 vForceDens, cfloat3 vImLoc,
 	project(fDeltaTime);
 }
 
-void AmpFluid3D::Render()
+void AmpFluid3D::Render(upAmpTexture2D<unorm4> &pDst, const CBImmutable &cbImmutable, const CBPerObject &cbPerObj)
 {
-	m_pDXContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	//m_pDXContext->IASetVertexBuffers(0u, 1u, &g_pNullBuffer, &g_iNullUint, &g_iNullUint);
+	const auto tvDstRW = AmpRWTexture2DView<unorm4>(dref(pDst));
+	const auto tvDensityRO = AmpTexture3DView<float>(dref(m_pSrcDensity));
 
-	m_pDXContext->VSSetShader(m_pShader->GetVertexShader(g_uVSRayCast).Get(), nullptr, 0u);
-	m_pDXContext->GSSetShader(nullptr, nullptr, 0u);
-	m_pDXContext->PSSetShader(m_pShader->GetPixelShader(g_uPSRayCast).Get(), nullptr, 0u);
-	
-	m_pDXContext->PSSetShaderResources(m_uSRField, 1u, m_pSRVDensity.GetAddressOf());
-	m_pDXContext->PSSetSamplers(m_uSmpLinearClamp, 1u, m_pState->LinearClamp().GetAddressOf());
+	parallel_for_each(
+		// Define the compute domain, which is the set of threads that are created.
+		tvDstRW.extent,
+		// Define the code to run on each thread on the accelerator.
+		[=](const AmpIndex2D idx) restrict(amp)
+	{
+		const auto vCornflowerBlue = float3(0.392156899f, 0.584313750f, 0.929411829f);
+		const auto vClear = vCornflowerBlue * vCornflowerBlue;
 
-	m_pDXContext->OMSetBlendState(m_pState->NonPremultiplied().Get(), nullptr, D3D11_DEFAULT_SAMPLE_MASK);
+		const auto fMaxDist = 2.0f * sqrt(3.0f);
+		const auto fStepScale = fMaxDist / NUM_SAMPLES;
+		const auto fLStepScale = fMaxDist / NUM_LIGHT_SAMPLES;
 
-	m_pDXContext->Draw(36u, 0u);
+		// Constant buffer immutable
+		const auto vLightRad = cbImmutable.m_vDirectional.xyz * cbImmutable.m_vDirectional.w;
+		const auto vAmbientRad = cbImmutable.m_vAmbient.xyz * cbImmutable.m_vAmbient.w;
 
-	m_pDXContext->OMSetBlendState(nullptr, nullptr, D3D11_DEFAULT_SAMPLE_MASK);
+		// Constant buffer per object
+		const auto &vLocalSpaceLightPt = cbPerObj.m_vLocalSpaceLightPt.xyz;
+		const auto &vLocalSpaceEyePt = cbPerObj.m_vLocalSpaceEyePt.xyz;
+		const auto &mScreenToLocal = cbPerObj.m_mScreenToLocal;
 
-	m_pDXContext->PSSetShaderResources(m_uSRField, 1u, &g_pNullSRV);
+		//////////////////////////////////////////////////////////////////////////////////////////
 
-	m_pDXContext->VSSetShader(nullptr, nullptr, 0);
-	m_pDXContext->PSSetShader(nullptr, nullptr, 0);
-	m_pDXContext->RSSetState(0);
+		const auto vLoc = float3((float)idx[1], (float)idx[0], 0.0f);
+
+		auto vPos = ScreenToLocal(vLoc, mScreenToLocal);			// The point on the near plane
+		const auto vRayDir = normalize(vPos - vLocalSpaceEyePt);
+		if (!ComputeStartPoint(vPos, vRayDir)) return;
+
+		const auto vStep = vRayDir * fStepScale;
+
+#ifndef _POINT_LIGHT_
+		const auto vLRStep = normalize(vLocalSpaceLightPt) * fLStepScale;
+#endif
+
+		// Transmittance
+		float fTransmit = 1.0f;
+		// In-scattered radiance
+		float fScatter = 0.0f;
+
+		for (uint i = 0; i < NUM_SAMPLES; ++i)
+		{
+			if (fabs(vPos.x) > 1.0f || fabs(vPos.y) > 1.0f || fabs(vPos.z) > 1.0f) break;
+			auto vTex = float3(0.5f, -0.5f, 0.5f) * vPos + 0.5f;
+
+			// Get a sample
+			const auto fDens = fmin(tvDensityRO.sample(vTex), 16.0f);
+
+			// Skip empty space
+			if (fDens > ZERO_THRESHOLD)
+			{
+				// Attenuate ray-throughput
+				const auto fScaledDens = fDens * fStepScale;
+				fTransmit *= saturate(1.0f - fScaledDens * ABSORPTION);
+				if (fTransmit < ZERO_THRESHOLD) break;
+
+				// Point light direction in texture space
+#ifdef _POINT_LIGHT_
+				const auto vLRStep = normalize(vLocalSpaceLightPt - vPos) * fLStepScale;
+#endif
+
+				// Sample light
+				auto fLRTrans = 1.0f;	// Transmittance along light ray
+				auto vLRPos = vPos + vLRStep;
+
+				for (uint j = 0; j < NUM_LIGHT_SAMPLES; ++j)
+				{
+					if (fabs(vLRPos.x) > 1.0f || fabs(vLRPos.y) > 1.0f || fabs(vLRPos.z) > 1.0f) break;
+					vTex = float3(0.5f, -0.5f, 0.5f) * vLRPos + 0.5f;
+
+					// Get a sample along light ray
+					cfloat fLRDens = fmin(tvDensityRO.sample(vTex), 16.0f);
+
+					// Attenuate ray-throughput along light direction
+					fLRTrans *= saturate(1.0f - ABSORPTION * fLStepScale * fLRDens);
+					if (fLRTrans < ZERO_THRESHOLD) break;
+
+					// Update position along light ray
+					vLRPos += vLRStep;
+				}
+
+				fScatter += fLRTrans * fTransmit * fScaledDens;
+			}
+
+			vPos += vStep;
+		}
+
+		//clip(ONE_THRESHOLD - fTransmit);
+
+		auto vResult = fScatter * vLightRad + vAmbientRad;
+		vResult = lerp(vResult, vClear, fTransmit);
+
+		tvDstRW.set(idx, unorm4(sqrt(vResult.x), sqrt(vResult.y), sqrt(vResult.z), 1.0f));
+	}
+	);
 }
 
 void AmpFluid3D::advect(cfloat fDeltaTime)
 {
-	auto tvVelocityRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
+	auto tvVelocityRO = AmpTexture3DView<float4>(dref(m_pSrcVelocity));
 	advect(fDeltaTime, tvVelocityRO);
 
 #ifdef _MACCORMACK_
@@ -108,7 +215,7 @@ void AmpFluid3D::advect(cfloat fDeltaTime)
 #endif
 }
 
-void AmpFluid3D::advect(cfloat fDeltaTime, const AmpTextureView<float4> &tvVelocityRO)
+void AmpFluid3D::advect(cfloat fDeltaTime, const AmpTexture3DView<float4> &tvVelocityRO)
 {
 #ifdef _MACCORMACK_
 	static const auto fDecay = 1.0f;
@@ -116,10 +223,10 @@ void AmpFluid3D::advect(cfloat fDeltaTime, const AmpTextureView<float4> &tvVeloc
 	static const auto fDecay = 0.996f;
 #endif
 
-	const auto tvPhiVelRW = AmpRWTextureView<float4>(dref(m_pDstVelocity));
-	const auto tvPhiDenRW = AmpRWTextureView<float>(dref(m_pDstDensity));
-	const auto tvPhiVelRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
-	const auto tvPhiDenRO = AmpTextureView<float>(dref(m_pSrcDensity));
+	const auto tvPhiVelRW = AmpRWTexture3DView<float4>(dref(m_pDstVelocity));
+	const auto tvPhiDenRW = AmpRWTexture3DView<float>(dref(m_pDstDensity));
+	const auto tvPhiVelRO = AmpTexture3DView<float4>(dref(m_pSrcVelocity));
+	const auto tvPhiDenRO = AmpTexture3DView<float>(dref(m_pSrcDensity));
 
 	const auto vTexel = 1.0f / m_vSimSize;
 
@@ -127,7 +234,7 @@ void AmpFluid3D::advect(cfloat fDeltaTime, const AmpTextureView<float4> &tvVeloc
 		// Define the compute domain, which is the set of threads that are created.
 		tvPhiVelRW.extent,
 		// Define the code to run on each thread on the accelerator.
-		[=](const AmpIndex idx) restrict(amp)
+		[=](const AmpIndex3D idx) restrict(amp)
 	{
 		const auto vLoc = float3((float)idx[2], (float)idx[1], (float)idx[0]);
 		
@@ -136,8 +243,8 @@ void AmpFluid3D::advect(cfloat fDeltaTime, const AmpTextureView<float4> &tvVeloc
 		const auto vTex = (vLoc + 0.5f) * vTexel - vU * fDeltaTime;
 
 		// Update velocity and density
-		tvPhiVelRW.set(idx, tvPhiVelRO.sample<filter_linear, address_wrap>(vTex));
-		tvPhiDenRW.set(idx, tvPhiDenRO.sample<filter_linear, address_wrap>(vTex) * fDecay);
+		tvPhiVelRW.set(idx, tvPhiVelRO.sample(vTex));
+		tvPhiDenRW.set(idx, tvPhiDenRO.sample(vTex) * fDecay);
 	}
 	);
 
@@ -160,10 +267,10 @@ void AmpFluid3D::diffuse(const uint8_t uIteration)
 
 void AmpFluid3D::impulse(cfloat fDeltaTime, cfloat4 &vForceDens, cfloat3 &vImLoc)
 {
-	const auto tvVelocityRW = AmpRWTextureView<float4>(dref(m_pDstVelocity));
-	const auto tvDensityRW = AmpRWTextureView<float>(dref(m_pDstDensity));
-	const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
-	const auto tvDensityRO = AmpTextureView<float>(dref(m_pSrcDensity));
+	const auto tvVelocityRW = AmpRWTexture3DView<float4>(dref(m_pDstVelocity));
+	const auto tvDensityRW = AmpRWTexture3DView<float>(dref(m_pDstDensity));
+	const auto tvVelocityRO = AmpTexture3DView<float4>(dref(m_pSrcVelocity));
+	const auto tvDensityRO = AmpTexture3DView<float>(dref(m_pSrcDensity));
 
 	const auto vTexel = 1.0f / m_vSimSize;
 
@@ -171,7 +278,7 @@ void AmpFluid3D::impulse(cfloat fDeltaTime, cfloat4 &vForceDens, cfloat3 &vImLoc
 		// Define the compute domain, which is the set of threads that are created.
 		tvVelocityRW.extent,
 		// Define the code to run on each thread on the accelerator.
-		[=](const AmpIndex idx) restrict(amp)
+		[=](const AmpIndex3D idx) restrict(amp)
 	{
 		const auto vLoc = float3((float)idx[2], (float)idx[1], (float)idx[0]);
 		const auto vTex = vLoc * vTexel;
@@ -197,7 +304,7 @@ void AmpFluid3D::impulse(cfloat fDeltaTime, cfloat4 &vForceDens, cfloat3 &vImLoc
 void AmpFluid3D::project(cfloat fDeltaTime)
 {
 	{
-		const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
+		const auto tvVelocityRO = AmpTexture3DView<float4>(dref(m_pSrcVelocity));
 		m_pressure.ComputeDivergence(tvVelocityRO);
 		m_pressure.SolvePoisson(cfloat2(-1.0f, 6.0f));
 	}
@@ -207,15 +314,15 @@ void AmpFluid3D::project(cfloat fDeltaTime)
 	// Projection
 	{
 		auto txPressure = m_pressure.GetSrc();
-		const auto tvVelocityRW = AmpRWTextureView<float4>(dref(m_pDstVelocity));
-		const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
-		const auto tvPressureRO = AmpTextureView<float>(dref(txPressure));
+		const auto tvVelocityRW = AmpRWTexture3DView<float4>(dref(m_pDstVelocity));
+		const auto tvVelocityRO = AmpTexture3DView<float4>(dref(m_pSrcVelocity));
+		const auto tvPressureRO = AmpTexture3DView<float>(dref(txPressure));
 
 		parallel_for_each(
 			// Define the compute domain, which is the set of threads that are created.
 			tvVelocityRW.extent,
 			// Define the code to run on each thread on the accelerator.
-			[=](const AmpIndex idx) restrict(amp)
+			[=](const AmpIndex3D idx) restrict(amp)
 		{
 			// Project the velocity onto its divergence-free component
 			const auto vVelocity = tvVelocityRO[idx].xyz - Gradient3D(tvPressureRO, idx) / REST_DENS;
@@ -242,14 +349,14 @@ void AmpFluid3D::project(cfloat fDeltaTime)
 
 void AmpFluid3D::bound()
 {
-	const auto tvVelocityRW = AmpRWTextureView<float4>(dref(m_pDstVelocity));
-	const auto tvVelocityRO = AmpTextureView<float4>(dref(m_pSrcVelocity));
+	const auto tvVelocityRW = AmpRWTexture3DView<float4>(dref(m_pDstVelocity));
+	const auto tvVelocityRO = AmpTexture3DView<float4>(dref(m_pSrcVelocity));
 
 	parallel_for_each(
 		// Define the compute domain, which is the set of threads that are created.
 		tvVelocityRW.extent,
 		// Define the code to run on each thread on the accelerator.
-		[=](const AmpIndex idx) restrict(amp)
+		[=](const AmpIndex3D idx) restrict(amp)
 	{
 		// Current location
 		const auto vMax = int3(tvVelocityRW.extent[2], tvVelocityRW.extent[1], tvVelocityRW.extent[0]) - 1;

@@ -22,12 +22,6 @@
     <Filter Include="XSDX\Header Files">
       <UniqueIdentifier>{4a53c2a1-a29a-4a30-948b-d3e542e6332d}</UniqueIdentifier>
     </Filter>
-    <Filter Include="XSDX\Source Files">
-      <UniqueIdentifier>{35904f58-b0bf-40cb-a120-e1a88843f7cc}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Shaders">
-      <UniqueIdentifier>{e1fbc055-6ecd-468c-9567-c93badb2c8f0}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <Text Include="ReadMe.txt" />
@@ -48,23 +42,8 @@
     <ClInclude Include="Common\DirectXHelper.h">
       <Filter>Common</Filter>
     </ClInclude>
-    <ClInclude Include="XSDX\XSDXShader.h">
-      <Filter>XSDX\Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="XSDX\XSDXShaderCommon.h">
-      <Filter>XSDX\Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="XSDX\XSDXSharedConst.h">
-      <Filter>XSDX\Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="XSDX\XSDXState.h">
-      <Filter>XSDX\Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="XSDX\XSDXType.h">
       <Filter>XSDX\Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Content\ShaderCommon3D.h">
-      <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Content\FieldMath.h">
       <Filter>Header Files</Filter>
@@ -85,12 +64,6 @@
     </ClCompile>
     <ClCompile Include="pch.cpp">
       <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="XSDX\XSDXShader.cpp">
-      <Filter>XSDX\Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="XSDX\XSDXState.cpp">
-      <Filter>XSDX\Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Content\AmpFluid3D.cpp">
       <Filter>Source Files</Filter>
@@ -113,13 +86,5 @@
     <None Include="Content\AmpPoisson3D.inl">
       <Filter>Source Files</Filter>
     </None>
-  </ItemGroup>
-  <ItemGroup>
-    <FxCompile Include="Content\PSRayCast.hlsl">
-      <Filter>Shaders</Filter>
-    </FxCompile>
-    <FxCompile Include="Content\VSRayCast.hlsl">
-      <Filter>Shaders</Filter>
-    </FxCompile>
   </ItemGroup>
 </Project>

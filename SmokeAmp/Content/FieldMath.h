@@ -6,16 +6,42 @@
 
 #include "Common\amp_vector_math.h"
 
-using AmpIndex = concurrency::index<g_iDim>;
+using AmpIndex1D = concurrency::index<1>;
+using AmpIndex2D = concurrency::index<2>;
+using AmpIndex3D = concurrency::index<3>;
 
 template<typename T>
-using AmpTexture = concurrency::graphics::texture<T, g_iDim>;
+using AmpTexture1D = concurrency::graphics::texture<T, 1>;
 template<typename T>
-using AmpTextureView = concurrency::graphics::texture_view<const T, g_iDim>;
+using AmpTexture1DView = concurrency::graphics::texture_view<const T, 1>;
 template<typename T>
-using AmpRWTextureView = concurrency::graphics::texture_view<T, g_iDim>;
+using AmpRWTexture1DView = concurrency::graphics::texture_view<T, 1>;
 template<typename T>
-using spAmpTexture = std::shared_ptr<AmpTexture<T>>;
+using upAmpTexture1D = std::unique_ptr<AmpTexture1D<T>>;
+template<typename T>
+using spAmpTexture1D = std::shared_ptr<AmpTexture1D<T>>;
+
+template<typename T>
+using AmpTexture2D = concurrency::graphics::texture<T, 2>;
+template<typename T>
+using AmpTexture2DView = concurrency::graphics::texture_view<const T, 2>;
+template<typename T>
+using AmpRWTexture2DView = concurrency::graphics::texture_view<T, 2>;
+template<typename T>
+using upAmpTexture2D = std::unique_ptr<AmpTexture2D<T>>;
+template<typename T>
+using spAmpTexture2D = std::shared_ptr<AmpTexture2D<T>>;
+
+template<typename T>
+using AmpTexture3D = concurrency::graphics::texture<T, 3>;
+template<typename T>
+using AmpTexture3DView = concurrency::graphics::texture_view<const T, 3>;
+template<typename T>
+using AmpRWTexture3DView = concurrency::graphics::texture_view<T, 3>;
+template<typename T>
+using upAmpTexture3D = std::unique_ptr<AmpTexture3D<T>>;
+template<typename T>
+using spAmpTexture3D = std::shared_ptr<AmpTexture3D<T>>;
 
 static inline float Gaussian3D(cfloat3 &vDisp, cfloat fRad) restrict(amp, cpu)
 {
@@ -24,7 +50,7 @@ static inline float Gaussian3D(cfloat3 &vDisp, cfloat fRad) restrict(amp, cpu)
 	return concurrency::fast_math::exp(-4.0f * dot(vDisp, vDisp) / fRadSq);
 }
 
-static inline float3 Gradient3D(const AmpTextureView<float> &tvSource, const AmpIndex &idx) restrict(amp)
+static inline float3 Gradient3D(const AmpTexture3DView<float> &tvSource, const AmpIndex3D &idx) restrict(amp)
 {
 	// Get values from neighboring cells
 	const auto fxL = tvSource(idx[0], idx[1], idx[2] - 1);
@@ -38,7 +64,7 @@ static inline float3 Gradient3D(const AmpTextureView<float> &tvSource, const Amp
 	return 0.5 * float3(fxR - fxL, fyD - fyU, fzB - fzF);
 }
 
-static inline float Divergence3D(const AmpTextureView<float4> &tvSource, const AmpIndex &idx) restrict(amp)
+static inline float Divergence3D(const AmpTexture3DView<float4> &tvSource, const AmpIndex3D &idx) restrict(amp)
 {
 	// Get values from neighboring cells
 	const auto fxL = tvSource(idx[0], idx[1], idx[2] - 1).x;

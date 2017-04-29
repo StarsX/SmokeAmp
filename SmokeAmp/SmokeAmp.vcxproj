@@ -166,15 +166,10 @@
     <ClInclude Include="Content\FieldMath.h" />
     <ClInclude Include="Content\AmpFluid3D.h" />
     <ClInclude Include="Content\AmpPoisson3D.h" />
-    <ClInclude Include="Content\ShaderCommon3D.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="SmokeAmp.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="targetver.h" />
-    <ClInclude Include="XSDX\XSDXShader.h" />
-    <ClInclude Include="XSDX\XSDXShaderCommon.h" />
-    <ClInclude Include="XSDX\XSDXSharedConst.h" />
-    <ClInclude Include="XSDX\XSDXState.h" />
     <ClInclude Include="XSDX\XSDXType.h" />
   </ItemGroup>
   <ItemGroup>
@@ -186,8 +181,6 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="XSDX\XSDXShader.cpp" />
-    <ClCompile Include="XSDX\XSDXState.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="SmokeAmp.rc" />
@@ -198,28 +191,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Content\AmpPoisson3D.inl" />
-  </ItemGroup>
-  <ItemGroup>
-    <FxCompile Include="Content\PSRayCast.hlsl">
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Pixel</ShaderType>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">4.0</ShaderModel>
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Pixel</ShaderType>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">4.0</ShaderModel>
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0</ShaderModel>
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">4.0</ShaderModel>
-    </FxCompile>
-    <FxCompile Include="Content\VSRayCast.hlsl">
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Vertex</ShaderType>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">4.0</ShaderModel>
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Vertex</ShaderType>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">4.0</ShaderModel>
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0</ShaderModel>
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">4.0</ShaderModel>
-    </FxCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

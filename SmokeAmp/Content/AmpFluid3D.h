@@ -11,12 +11,25 @@
 class AmpFluid3D
 {
 public:
-	AmpFluid3D(const XSDX::CPDXDevice &pDXDevice, const XSDX::spShader &pShader, const XSDX::spState &pState);
+	struct CBImmutable
+	{
+		float4	m_vDirectional;
+		float4	m_vAmbient;
+	};
+
+	struct CBPerObject
+	{
+		float4		m_vLocalSpaceLightPt;
+		float4		m_vLocalSpaceEyePt;
+		float4x4	m_mScreenToLocal;
+	};
+
+	AmpFluid3D(const AmpAcclView &acclView);
 
 	void Init(const int32_t iWidth, const int32_t iHeight, const int32_t iDepth);
 	void Simulate(
 		cfloat fDeltaTime,
-		const XSDX::CPDXShaderResourceView &pImpulseSRV,
+		const AmpTexture3DView<float4> &tvImpulseRO,
 		const uint8_t uItVisc = VISC_ITERATION
 		);
 	void Simulate(
@@ -25,38 +38,31 @@ public:
 		cfloat3 vImLoc = float3(0.0f, 0.0f, 0.0f),
 		const uint8_t uItVisc = VISC_ITERATION
 		);
-	void Render(const XSDX::CPDXShaderResourceView &pDepthSRV);
-	void Render();
+	void Render(upAmpTexture2D<unorm4> &pDst, const AmpTexture3DView<float> &tvDepthRO,
+		const CBImmutable &cbImmutable, const CBPerObject &cbPerObj);
+	void Render(upAmpTexture2D<unorm4> &pDst, const CBImmutable &cbImmutable,
+		const CBPerObject &cbPerObj);
+
+	const AmpAcclView &GetAcceleratorView() const { return m_acclView; }
 
 protected:
 	void advect(cfloat fDeltaTime);
-	void advect(cfloat fDeltaTime, const AmpTextureView<float4> &tvVelocityRO);
+	void advect(cfloat fDeltaTime, const AmpTexture3DView<float4> &tvVelocityRO);
 	void diffuse(const uint8_t uIteration);
 	void impulse(cfloat fDeltaTime, cfloat4 &vForceDens, cfloat3 &vImLoc);
 	void project(cfloat fDeltaTime);
 	void bound();
 
-	spAmpTexture<float4>			m_pSrcVelocity;
-	spAmpTexture<float4>			m_pDstVelocity;
-	spAmpTexture<float>				m_pSrcDensity;
-	spAmpTexture<float>				m_pDstDensity;
-	spAmpTexture<float>				m_pTmpDensity;
-
-	XSDX::CPDXShaderResourceView	m_pSRVDensity;
-
-	uint8_t							m_uSRField;
-	uint8_t							m_uSmpLinearClamp;
+	spAmpTexture3D<float4>			m_pSrcVelocity;
+	spAmpTexture3D<float4>			m_pDstVelocity;
+	spAmpTexture3D<float>			m_pSrcDensity;
+	spAmpTexture3D<float>			m_pDstDensity;
+	spAmpTexture3D<float>			m_pTmpDensity;
 
 	float3							m_vSimSize;
 
 	AmpPoisson3D<float4>			m_diffuse;
 	AmpPoisson3D<float>				m_pressure;
-
-	XSDX::spShader					m_pShader;
-	XSDX::spState					m_pState;
-
-	XSDX::CPDXDevice				m_pDXDevice;
-	XSDX::CPDXContext				m_pDXContext;
 
 	AmpAcclView						m_acclView;
 };

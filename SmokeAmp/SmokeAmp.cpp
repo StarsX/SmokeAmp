@@ -10,9 +10,11 @@
 
 using namespace std;
 using namespace Concurrency;
+using namespace concurrency::direct3d;
+using namespace concurrency::graphics;
+using namespace concurrency::graphics::direct3d;
 using namespace DirectX;
 using namespace DX;
-using namespace ShaderIDs;
 using namespace XSDX;
 
 using upCDXUTTextHelper = unique_ptr<CDXUTTextHelper>;
@@ -34,13 +36,14 @@ upCDXUTTextHelper				g_pTxtHelper;
 
 upAmpFluid3D					g_pFluid;
 
-spShader						g_pShader;
-spState							g_pState;
-
 CPDXBuffer						g_pCBImmutable;
 CPDXBuffer						g_pCBMatrices;
 CPDXBuffer						g_pCBPerFrame;
 CPDXBuffer						g_pCBPerObject;
+
+upAmpTexture2D<unorm4>			g_pBackBuffer;
+
+AmpFluid3D::CBImmutable			g_cbImmutable;
 
 float2							g_vViewport;
 float3							g_vMouse;
@@ -125,7 +128,20 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
 	DXUTInit(true, true, nullptr); // Parse the command line, show msgboxes on error, no extra command line params
 	DXUTSetCursorSettings(false, true); // Show the cursor and clip it when in full screen
 	DXUTCreateWindow(L"Smoke 3D using C++ AMP");
-	DXUTCreateDevice(D3D_FEATURE_LEVEL_11_0, true, 1280, 960);
+
+	auto deviceSettings = DXUTDeviceSettings();
+	DXUTApplyDefaultDeviceSettings(&deviceSettings);
+	deviceSettings.MinimumFeatureLevel = D3D_FEATURE_LEVEL_11_0;
+	// UAV cannot be DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+	deviceSettings.d3d11.sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	deviceSettings.d3d11.sd.BufferDesc.Width = 1280;
+	deviceSettings.d3d11.sd.BufferDesc.Height = 960;
+	deviceSettings.d3d11.sd.Windowed = true;
+	deviceSettings.d3d11.AutoCreateDepthStencil = false;
+	deviceSettings.d3d11.sd.BufferUsage |= DXGI_USAGE_UNORDERED_ACCESS;
+
+	DXUTCreateDeviceFromSettings(&deviceSettings);
+	//DXUTCreateDevice(D3D_FEATURE_LEVEL_11_0, true, 1280, 960);
 	DXUTMainLoop(); // Enter into the DXUT render loop
 
 #if defined(DEBUG) | defined(_DEBUG)
@@ -331,41 +347,17 @@ HRESULT CALLBACK OnD3D11CreateDevice(ID3D11Device* pd3dDevice, const DXGI_SURFAC
 	V_RETURN(g_DialogResourceManager.OnD3D11CreateDevice(pd3dDevice, pd3dImmediateContext));
 	g_pTxtHelper = make_unique<CDXUTTextHelper>(pd3dDevice, pd3dImmediateContext, &g_DialogResourceManager, 15);
 
-	// Load shaders asynchronously.
-	g_pShader = make_shared<Shader>(pd3dDevice);
-	g_pState = make_shared<State>(pd3dDevice);
-
-	g_pFluid = make_unique<AmpFluid3D>(pd3dDevice, g_pShader, g_pState);
+	g_pFluid = make_unique<AmpFluid3D>(create_accelerator_view(pd3dDevice));
 	g_pFluid->Init(64u, 64u, 64u);
-
-	auto loadVSTask = g_pShader->CreateVertexShader(L"VSRayCast.cso", g_uVSRayCast);
-	auto loadPSTask = g_pShader->CreatePixelShader(L"PSRayCast.cso", g_uPSRayCast);
-
-	const auto createShaderTask = loadVSTask && loadPSTask;
 
 	const auto createConstTask = create_task([pd3dDevice, pd3dImmediateContext]() {
 		// Setup constant buffers
-		auto desc = CD3D11_BUFFER_DESC(sizeof(CBMatrices), D3D11_BIND_CONSTANT_BUFFER);
-		ThrowIfFailed(pd3dDevice->CreateBuffer(&desc, nullptr, &g_pCBMatrices));
-
-		desc.ByteWidth = sizeof(XMVECTOR[2]);
-		ThrowIfFailed(pd3dDevice->CreateBuffer(&desc, nullptr, &g_pCBPerObject));
-
-		desc.ByteWidth = sizeof(CBImmutable);
-		desc.Usage = D3D11_USAGE_IMMUTABLE;
-		auto im = CBImmutable();
-		im.m_vDirectional = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.6f);
-		im.m_vAmbient = XMFLOAT4(1.0f, 1.0f, 1.0f, 0.08f);
-		const auto dsd = D3D11_SUBRESOURCE_DATA{ &im };
-		ThrowIfFailed(pd3dDevice->CreateBuffer(&desc, &dsd, &g_pCBImmutable));
-
-		pd3dImmediateContext->PSSetConstantBuffers(0u, 1u, g_pCBImmutable.GetAddressOf());
+		g_cbImmutable.m_vDirectional = float4(1.0f, 1.0f, 1.0f, 1.6f);
+		g_cbImmutable.m_vAmbient = float4(1.0f, 1.0f, 1.0f, 0.08f);
 	});
 
 	// Once the cube is loaded, the object is ready to be rendered.
-	(createShaderTask && createConstTask).then([]() {
-		g_pShader->ReleaseShaderBuffers();
-
+	createConstTask.then([]() {
 		// View
 		// Setup the camera's view parameters
 		const auto vAngV = XM_PI / 6.0f;
@@ -409,6 +401,12 @@ HRESULT CALLBACK OnD3D11ResizedSwapChain(ID3D11Device* pd3dDevice, IDXGISwapChai
 	// Set window size dependent constants
 	g_vViewport = float2(viewport.Width, viewport.Height);
 
+	// Get the back buffer
+	auto pBackBuffer = CPDXTexture2D();
+	ThrowIfFailed(pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer)));
+
+	g_pBackBuffer = make_unique<AmpTexture2D<unorm4>>(make_texture<unorm4, 2>(g_pFluid->GetAcceleratorView(), pBackBuffer.Get()));
+
 	//g_HUD.SetLocation(pBackBufferSurfaceDesc->Width - 170, 0);
 	//g_HUD.SetSize(170, 170);
 	g_SampleUI.SetLocation(pBackBufferSurfaceDesc->Width - 170, pBackBufferSurfaceDesc->Height - 300);
@@ -427,11 +425,8 @@ void CALLBACK OnD3D11FrameRender(ID3D11Device* pd3dDevice, ID3D11DeviceContext* 
 	if (!g_bLoadingComplete) return;
 
 	// Set render targets to the screen.
-	ID3D11RenderTargetView *pRTVs[] = { DXUTGetD3D11RenderTargetView() };
-	ID3D11DepthStencilView *pDSV = DXUTGetD3D11DepthStencilView();
-	pd3dImmediateContext->ClearRenderTargetView(pRTVs[0], DirectX::Colors::CornflowerBlue);
-	pd3dImmediateContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-	pd3dImmediateContext->OMSetRenderTargets(1, pRTVs, pDSV);
+	const auto pRTV = DXUTGetD3D11RenderTargetView();
+	pd3dImmediateContext->ClearRenderTargetView(pRTV, DirectX::Colors::CornflowerBlue);
 
 	// Prepare the constant buffer to send it to the graphics device.
 	// Get the projection & view matrix from the camera class
@@ -441,21 +436,29 @@ void CALLBACK OnD3D11FrameRender(ID3D11Device* pd3dDevice, ID3D11DeviceContext* 
 	const auto mViewProj = XMMatrixMultiply(mView, mProj);
 	const auto mWorldViewProj = XMMatrixMultiply(g_mWorld, mViewProj);
 
-	// Set VS constants
-	const auto cbMatrices = CBMatrices{ XMMatrixTranspose(mWorldViewProj) };
-	pd3dImmediateContext->UpdateSubresource(g_pCBMatrices.Get(), 0u, nullptr, &cbMatrices, 0u, 0u);
-	pd3dImmediateContext->VSSetConstantBuffers(0u, 1u, g_pCBMatrices.GetAddressOf());
+	// Set AMP constants
+	auto cbPerObject = AmpFluid3D::CBPerObject();
+	const auto vLocalSpaceLightPt = XMVector3TransformCoord(XMLoadFloat4(&g_vLightPt), mWorldI);
+	const auto vLocalSpaceEyePt = XMVector3TransformCoord(g_Camera.GetEyePt(), mWorldI);
+	XMStoreFloat4(reinterpret_cast<lpfloat4>(&cbPerObject.m_vLocalSpaceLightPt), vLocalSpaceLightPt);
+	XMStoreFloat4(reinterpret_cast<lpfloat4>(&cbPerObject.m_vLocalSpaceEyePt), vLocalSpaceEyePt);
 
-	// Set PS constants
-	auto cbPerObject = std::array<XMVECTOR, 2>();
-	cbPerObject[0] = XMVector3TransformCoord(XMLoadFloat4(&g_vLightPt), mWorldI);
-	cbPerObject[1] = XMVector3TransformCoord(g_Camera.GetEyePt(), mWorldI);
-	pd3dImmediateContext->UpdateSubresource(g_pCBPerObject.Get(), 0u, nullptr, cbPerObject.data(), 0u, 0u);
-	pd3dImmediateContext->PSSetConstantBuffers(2u, 1u, g_pCBPerObject.GetAddressOf());
+	const auto mToScreen = XMMATRIX
+	(
+		0.5f * g_vViewport.x,	0.0f,					0.0f, 0.0f,
+		0.0f,					-0.5f * g_vViewport.y,	0.0f, 0.0f,
+		0.0f,					0.0f,					1.0f, 0.0f,
+		0.5f * g_vViewport.x,	0.5f * g_vViewport.y,	0.0f, 1.0f
+	);
+	const auto mLocalToScreen = XMMatrixMultiply(mWorldViewProj, mToScreen);
+	const auto mScreenToLocal = XMMatrixInverse(nullptr, mLocalToScreen);
+	XMStoreFloat4x4(reinterpret_cast<lpfloat4x4>(&cbPerObject.m_mScreenToLocal), XMMatrixTranspose(mScreenToLocal));
 
-	// Render
+	// Simulate and render
 	g_pFluid->Simulate(max(fElapsedTime, DELTA_TIME), g_vForceDens, g_vImLoc, g_bViscous ? 10ui8 : 0ui8);
-	g_pFluid->Render();
+	g_pFluid->Render(g_pBackBuffer, g_cbImmutable, cbPerObject);
+
+	pd3dImmediateContext->OMSetRenderTargets(1u, &pRTV, nullptr);
 
 	DXUT_BeginPerfEvent(DXUT_PERFEVENTCOLOR, L"HUD / Stats");
 	if (g_bShowFPS) {
@@ -488,6 +491,5 @@ void CALLBACK OnD3D11DestroyDevice(void* pUserContext)
 	g_pCBImmutable.Reset();
 	g_pTxtHelper.reset();
 	g_pFluid.reset();
-	g_pState.reset();
-	g_pShader.reset();
+	g_pBackBuffer.reset();
 }
