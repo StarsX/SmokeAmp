@@ -5,8 +5,6 @@
 #include "pch.h"
 #include "AmpFluid3D.h"
 
-#pragma optimize("Workaround a compiler bug temporarily", off)
-
 #define NUM_SAMPLES			128
 #define NUM_LIGHT_SAMPLES	32
 #define ABSORPTION			1.0f
