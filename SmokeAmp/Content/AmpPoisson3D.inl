@@ -49,7 +49,7 @@ inline void AmpPoisson3D<T>::Init(const int32_t iWidth, const int32_t iHeight, c
 	m_vSimSize = float3(fWidth, fHeight, fDepth);
 	
 	// Initialize data
-	const auto uNumElement = sizeof(T) / sizeof(float);
+	const auto uNumElement = uint32_t(sizeof(T) / sizeof(float));
 	const auto uByteWidth = (bitWidth / 8u) * uNumElement * iWidth * iHeight * iDepth;
 	auto vData = vbyte(uByteWidth);
 	ZeroMemory(vData.data(), uByteWidth);
