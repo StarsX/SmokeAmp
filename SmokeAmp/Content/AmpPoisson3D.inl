@@ -6,7 +6,7 @@
 #define THREAD_BLOCK_Y		8
 #define THREAD_BLOCK_Z		8
 
-#define REST_DENS			0.75
+#define REST_DENS			0.8
 
 template<typename T>
 inline AmpPoisson3D<T>::AmpPoisson3D()
