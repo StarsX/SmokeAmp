@@ -29,7 +29,7 @@ inline void AmpPoisson3D<float>::Init(const int32_t iWidth, const int32_t iHeigh
 	m_vSimSize = float3(fWidth, fHeight, fDepth);
 
 	// Initialize data
-	const auto uByteWidth = (bitWidth / 8u) * iWidth * iHeight * iDepth;
+	const auto uByteWidth = (bitWidth / 8) * iWidth * iHeight * iDepth;
 	auto vData = std::vector<byte>(uByteWidth);
 	ZeroMemory(vData.data(), uByteWidth);
 
@@ -50,7 +50,7 @@ inline void AmpPoisson3D<T>::Init(const int32_t iWidth, const int32_t iHeight, c
 	
 	// Initialize data
 	const auto uNumElement = uint32_t(sizeof(T) / sizeof(float));
-	const auto uByteWidth = (bitWidth / 8u) * uNumElement * iWidth * iHeight * iDepth;
+	const auto uByteWidth = (bitWidth / 8) * uNumElement * iWidth * iHeight * iDepth;
 	auto vData = vbyte(uByteWidth);
 	ZeroMemory(vData.data(), uByteWidth);
 
@@ -148,7 +148,7 @@ inline void AmpPoisson3D<T>::Advect(cfloat fDeltaTime, const AmpTexture3DView<U>
 }
 
 template<typename T>
-inline void AmpPoisson3D<T>::SwapTextures(const bool bUnknown = false)
+inline void AmpPoisson3D<T>::SwapTextures(const bool bUnknown)
 {
 	if (bUnknown) m_pSrcUnknown.swap(m_pDstUnknown);
 	else m_pSrcKnown.swap(m_pDstUnknown);
@@ -170,7 +170,7 @@ inline float AmpPoisson3D<T>::gaussSeidel(const AmpRWTexture3DView<float> &tvUnk
 }
 
 template<typename T>
-inline void AmpPoisson3D<T>::jacobi(cfloat2 & vf)
+inline void AmpPoisson3D<T>::jacobi(cfloat2 &vf)
 {
 	const auto tvUnknownRW = AmpRWTexture3DView<T>(dref(m_pDstUnknown));
 	const auto tvUnknownRO = AmpTexture3DView<T>(dref(m_pSrcUnknown));

@@ -2,7 +2,6 @@
 // By Stars XU Tianchen
 //--------------------------------------------------------------------------------------
 
-#include "pch.h"
 #include "AmpFluid3D.h"
 
 #define NUM_SAMPLES			128
@@ -74,14 +73,14 @@ void AmpFluid3D::Init(const int32_t iWidth, const int32_t iHeight, const int32_t
 	m_vSimSize = float3(fWidth, fHeight, fDepth);
 
 	// Create 3D textures
-	m_pSrcDensity = make_unique<AmpTexture3D<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
-	m_pDstDensity = make_unique<AmpTexture3D<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
+	m_pSrcDensity = make_unique<AmpTexture3D<float>>(iDepth, iHeight, iWidth, 16, m_acclView);
+	m_pDstDensity = make_unique<AmpTexture3D<float>>(iDepth, iHeight, iWidth, 16, m_acclView);
 #ifdef _MACCORMACK_
-	m_pTmpDensity = make_unique<AmpTexture<float>>(iDepth, iHeight, iWidth, 16u, m_acclView);
+	m_pTmpDensity = make_unique<AmpTexture<float>>(iDepth, iHeight, iWidth, 16, m_acclView);
 #endif
 
-	m_diffuse.Init(iWidth, iHeight, iDepth, 16ui8, m_acclView);
-	m_pressure.Init(iWidth, iHeight, iDepth, 32ui8, m_acclView);
+	m_diffuse.Init(iWidth, iHeight, iDepth, 16, m_acclView);
+	m_pressure.Init(iWidth, iHeight, iDepth, 32, m_acclView);
 	m_pSrcVelocity = m_diffuse.GetSrc();
 	m_pDstVelocity = m_diffuse.GetDst();
 }
@@ -255,7 +254,7 @@ void AmpFluid3D::advect(cfloat fDeltaTime, const AmpTexture3DView<float4> &tvVel
 
 void AmpFluid3D::diffuse(const uint8_t uIteration)
 {
-	if (uIteration > 0u)
+	if (uIteration > 0)
 	{
 		m_diffuse.SolvePoisson(uIteration);
 		m_pSrcVelocity = m_diffuse.GetSrc();

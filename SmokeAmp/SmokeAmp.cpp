@@ -5,7 +5,6 @@
 // By Stars XU Tianchen
 //--------------------------------------------------------------------------------------
 
-#include "pch.h"
 #include "SmokeAmp.h"
 
 using namespace std;
@@ -348,7 +347,7 @@ HRESULT CALLBACK OnD3D11CreateDevice(ID3D11Device* pd3dDevice, const DXGI_SURFAC
 	g_pTxtHelper = make_unique<CDXUTTextHelper>(pd3dDevice, pd3dImmediateContext, &g_DialogResourceManager, 15);
 
 	g_pFluid = make_unique<AmpFluid3D>(create_accelerator_view(pd3dDevice));
-	g_pFluid->Init(64u, 64u, 64u);
+	g_pFluid->Init(64, 64, 64);
 
 	const auto createConstTask = create_task([pd3dDevice, pd3dImmediateContext]() {
 		// Setup constant buffers
@@ -394,9 +393,9 @@ HRESULT CALLBACK OnD3D11ResizedSwapChain(ID3D11Device* pd3dDevice, IDXGISwapChai
 
 	// Initialize window size dependent resources
 	// Viewport clipping
-	auto iVpNum = 1u;
+	auto uVpNum = 1u;
 	D3D11_VIEWPORT viewport;
-	DXUTGetD3D11DeviceContext()->RSGetViewports(&iVpNum, &viewport);
+	DXUTGetD3D11DeviceContext()->RSGetViewports(&uVpNum, &viewport);
 
 	// Set window size dependent constants
 	g_vViewport = float2(viewport.Width, viewport.Height);
@@ -455,10 +454,10 @@ void CALLBACK OnD3D11FrameRender(ID3D11Device* pd3dDevice, ID3D11DeviceContext* 
 	XMStoreFloat4x4(reinterpret_cast<lpfloat4x4>(&cbPerObject.m_mScreenToLocal), XMMatrixTranspose(mScreenToLocal));
 
 	// Simulate and render
-	g_pFluid->Simulate(max(fElapsedTime, DELTA_TIME), g_vForceDens, g_vImLoc, g_bViscous ? 10ui8 : 0ui8);
+	g_pFluid->Simulate(max(fElapsedTime, DELTA_TIME), g_vForceDens, g_vImLoc, g_bViscous ? 10 : 0);
 	g_pFluid->Render(g_pBackBuffer, g_cbImmutable, cbPerObject);
 
-	pd3dImmediateContext->OMSetRenderTargets(1u, &pRTV, nullptr);
+	pd3dImmediateContext->OMSetRenderTargets(1, &pRTV, nullptr);
 
 	DXUT_BeginPerfEvent(DXUT_PERFEVENTCOLOR, L"HUD / Stats");
 	if (g_bShowFPS) {

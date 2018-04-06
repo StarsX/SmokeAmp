@@ -20,7 +20,7 @@ public:
 		const uint8_t bitWidth, AmpAcclView &acclView);
 	template<typename U>
 	void ComputeDivergence(const AmpTexture3DView<U> &tvSource);
-	void SolvePoisson(cfloat2 &vf, const uint8_t uIteration = 1ui8);
+	void SolvePoisson(cfloat2 &vf, const uint8_t uIteration = 1);
 	template<typename U>
 	void Advect(cfloat fDeltaTime, const AmpTexture3DView<U> &tvSource);
 	void SwapTextures(const bool bUnknown = false);
