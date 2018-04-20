@@ -40,7 +40,7 @@ CPDXBuffer						g_pCBMatrices;
 CPDXBuffer						g_pCBPerFrame;
 CPDXBuffer						g_pCBPerObject;
 
-upAmpTexture2D<unorm4>			g_pBackBuffer;
+IDXGISwapChain					*g_pSwapChain = nullptr;
 
 AmpFluid3D::CBImmutable			g_cbImmutable;
 
@@ -392,19 +392,9 @@ HRESULT CALLBACK OnD3D11ResizedSwapChain(ID3D11Device* pd3dDevice, IDXGISwapChai
 	g_Camera.SetButtonMasks(MOUSE_MIDDLE_BUTTON, MOUSE_WHEEL, MOUSE_RIGHT_BUTTON);
 
 	// Initialize window size dependent resources
-	// Viewport clipping
-	auto uVpNum = 1u;
-	D3D11_VIEWPORT viewport;
-	DXUTGetD3D11DeviceContext()->RSGetViewports(&uVpNum, &viewport);
-
 	// Set window size dependent constants
-	g_vViewport = float2(viewport.Width, viewport.Height);
-
-	// Get the back buffer
-	auto pBackBuffer = CPDXTexture2D();
-	ThrowIfFailed(pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer)));
-
-	g_pBackBuffer = make_unique<AmpTexture2D<unorm4>>(make_texture<unorm4, 2>(g_pFluid->GetAcceleratorView(), pBackBuffer.Get()));
+	g_vViewport = float2(static_cast<float>(pBackBufferSurfaceDesc->Width), static_cast<float>(pBackBufferSurfaceDesc->Height));
+	g_pSwapChain = pSwapChain;
 
 	//g_HUD.SetLocation(pBackBufferSurfaceDesc->Width - 170, 0);
 	//g_HUD.SetSize(170, 170);
@@ -421,7 +411,12 @@ void CALLBACK OnD3D11FrameRender(ID3D11Device* pd3dDevice, ID3D11DeviceContext* 
 	float fElapsedTime, void* pUserContext)
 {
 	// Loading is asynchronous. Only draw geometry after it's loaded.
-	if (!g_bLoadingComplete) return;
+	if (!g_bLoadingComplete || !g_pSwapChain) return;
+
+	// Get the back buffer
+	auto pBackBuffer = CPDXTexture2D();
+	ThrowIfFailed(g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer)));
+	auto pAmpBackBuffer = make_unique<AmpTexture2D<unorm4>>(make_texture<unorm4, 2>(g_pFluid->GetAcceleratorView(), pBackBuffer.Get()));
 
 	// Set render targets to the screen.
 	const auto pRTV = DXUTGetD3D11RenderTargetView();
@@ -455,7 +450,7 @@ void CALLBACK OnD3D11FrameRender(ID3D11Device* pd3dDevice, ID3D11DeviceContext* 
 
 	// Simulate and render
 	g_pFluid->Simulate(max(fElapsedTime, DELTA_TIME), g_vForceDens, g_vImLoc, g_bViscous ? 10 : 0);
-	g_pFluid->Render(g_pBackBuffer, g_cbImmutable, cbPerObject);
+	g_pFluid->Render(pAmpBackBuffer, g_cbImmutable, cbPerObject);
 
 	pd3dImmediateContext->OMSetRenderTargets(1, &pRTV, nullptr);
 
@@ -490,5 +485,4 @@ void CALLBACK OnD3D11DestroyDevice(void* pUserContext)
 	g_pCBImmutable.Reset();
 	g_pTxtHelper.reset();
 	g_pFluid.reset();
-	g_pBackBuffer.reset();
 }
