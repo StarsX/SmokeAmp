@@ -421,6 +421,7 @@ void CALLBACK OnD3D11FrameRender(ID3D11Device* pd3dDevice, ID3D11DeviceContext* 
 	// Set render targets to the screen.
 	const auto pRTV = DXUTGetD3D11RenderTargetView();
 	pd3dImmediateContext->ClearRenderTargetView(pRTV, DirectX::Colors::CornflowerBlue);
+	pd3dImmediateContext->OMSetRenderTargets(0, nullptr, nullptr);
 
 	// Prepare the constant buffer to send it to the graphics device.
 	// Get the projection & view matrix from the camera class
@@ -453,7 +454,6 @@ void CALLBACK OnD3D11FrameRender(ID3D11Device* pd3dDevice, ID3D11DeviceContext* 
 	g_pFluid->Render(pAmpBackBuffer, g_cbImmutable, cbPerObject);
 
 	pd3dImmediateContext->OMSetRenderTargets(1, &pRTV, nullptr);
-
 	DXUT_BeginPerfEvent(DXUT_PERFEVENTCOLOR, L"HUD / Stats");
 	if (g_bShowFPS) {
 		g_SampleUI.OnRender(fElapsedTime);
