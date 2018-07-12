@@ -2,11 +2,13 @@
 // By Stars XU Tianchen
 //--------------------------------------------------------------------------------------
 
-#define THREAD_BLOCK_X		8
-#define THREAD_BLOCK_Y		8
-#define THREAD_BLOCK_Z		8
+#define THREAD_BLOCK_X	8
+#define THREAD_BLOCK_Y	8
+#define THREAD_BLOCK_Z	8
 
-#define REST_DENS			0.8
+#define REST_DENS		0.8
+
+#define PRESS_ITERATION	48
 
 template<typename T>
 inline AmpPoisson3D<T>::AmpPoisson3D()
@@ -49,7 +51,7 @@ inline void AmpPoisson3D<T>::Init(const int32_t iWidth, const int32_t iHeight, c
 	m_vSimSize = float3(fWidth, fHeight, fDepth);
 	
 	// Initialize data
-	const auto uNumElement = uint32_t(sizeof(T) / sizeof(float));
+	const auto uNumElement = static_cast<uint32_t>(sizeof(T) / sizeof(float));
 	const auto uByteWidth = (bitWidth / 8) * uNumElement * iWidth * iHeight * iDepth;
 	auto vData = vbyte(uByteWidth);
 	ZeroMemory(vData.data(), uByteWidth);
@@ -90,16 +92,18 @@ inline void AmpPoisson3D<float>::SolvePoisson(cfloat2 &vf, const uint8_t uIterat
 		// Define the compute domain, which is the set of threads that are created.
 		tvUnknownRW.extent.tile<THREAD_BLOCK_X, THREAD_BLOCK_Y, THREAD_BLOCK_Z>(),
 		// Define the code to run on each thread on the accelerator.
-		[=](const AmpIndex3D idx) restrict(amp)
+		[=](const concurrency::tiled_index<THREAD_BLOCK_X, THREAD_BLOCK_Y, THREAD_BLOCK_Z> t_idx) restrict(amp)
 	{
+		const auto &idx = t_idx.global;
+
 		// Unordered Gauss-Seidel iteration
-		for (concurrency::graphics::uint i = 0; i < 1024; ++i)
+		for (concurrency::graphics::uint i = 0; i < PRESS_ITERATION; ++i)
 		{
 			const auto fPressPrev = tvUnknownRW[idx];
 			const auto fPress = gaussSeidel(tvUnknownRW, tvKnownRO, vf, idx);
 
-			if (concurrency::fast_math::fabs(fPress - fPressPrev) < 0.0000001f) return;
 			tvUnknownRW.set(idx, fPress);
+			t_idx.barrier.wait_with_global_memory_fence();
 		}
 	}
 	);

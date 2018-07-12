@@ -22,7 +22,7 @@
     <ProjectGuid>{F01262F6-79B1-4CA9-A3FB-EFD2A8C5577F}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>SmokeAmp</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.17134.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
