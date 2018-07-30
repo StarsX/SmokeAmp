@@ -117,3 +117,8 @@ static inline float4 mul(cfloat4x4 &m, cfloat4 &v) restrict(amp, cpu)
 {
 	return float4(dot(m.r[0], v), dot(m.r[1], v), dot(m.r[2], v), dot(m.r[3], v));
 }
+
+static inline float4 mul(cfloat4 &v, cfloat4x4 &m) restrict(amp, cpu)
+{
+	return v.x * m.r[0] + v.y * m.r[1] + v.z * m.r[2] + v.w * m.r[3];
+}
